@@ -1,0 +1,55 @@
+name: dontmissddl
+
+on:
+  schedule:
+    - cron: '0 1 * * *'  # Daily at UTC 1:00 (Beijing 9:00 AM)
+  workflow_dispatch:       # Manual trigger for testing
+
+jobs:
+  poll-and-remind:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install chromium --with-deps
+
+      - name: Poll sources & extract DDLs
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_GROUP_IDS: ${{ secrets.FEISHU_GROUP_IDS }}
+          EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
+          EMAIL_PORT: ${{ secrets.EMAIL_PORT }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          WECHAT_SOGOU_NAMES: ${{ secrets.WECHAT_SOGOU_NAMES }}
+        run: python -m server.main poll
+
+      - name: Send reminders
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_MY_OPEN_ID: ${{ secrets.FEISHU_MY_OPEN_ID }}
+          REMINDER_DAYS: ${{ vars.REMINDER_DAYS || '7,3,1' }}
+        run: python -m server.main remind
+
+      - name: Commit updated data
+        run: |
+          git config user.name "dontmissddl-bot"
+          git config user.email "bot@dontmissddl"
+          git add data/
+          git diff --staged --quiet || git commit -m "chore: update ddls [skip ci]"
+          git push
