@@ -57,21 +57,12 @@ class FeishuBot:
         except Exception:
             return None
 
-    def list_messages(self, chat_id: str, page_size: int = 50,
-                      start_time: str | None = None) -> list[dict]:
-        """List messages in a chat (for batch processing)."""
-        params = {
-            "container_id_type": "chat",
-            "container_id": chat_id,
-            "page_size": min(page_size, 50),
-            "sort_type": "ByCreateTimeDesc",
-        }
-        if start_time:
-            params["start_time"] = start_time
-
+    def list_chats(self, page_size: int = 50) -> list[dict]:
+        """List all chats the bot is in (including DMs)."""
+        params = {"page_size": min(page_size, 50)}
         try:
             resp = requests.get(
-                "https://open.feishu.cn/open-apis/im/v1/messages",
+                "https://open.feishu.cn/open-apis/im/v1/chats",
                 headers=self._headers(),
                 params=params,
                 timeout=10,
@@ -79,8 +70,65 @@ class FeishuBot:
             resp.raise_for_status()
             data = resp.json()
             return data.get("data", {}).get("items", [])
-        except Exception:
+        except Exception as e:
+            print(f"[Feishu] list_chats failed: {e}")
             return []
+
+    def list_messages(self, chat_id: str, page_size: int = 50,
+                      stop_at_id: str | None = None) -> list[dict]:
+        """List messages in a chat, paginating until stop_at_id is found.
+
+        Returns all new messages since ``stop_at_id`` (exclusive).
+        If ``stop_at_id`` is None, returns latest page only.
+        """
+        messages: list[dict] = []
+        page_token: str | None = None
+        seen_ids: set[str] = set()
+
+        while True:
+            params = {
+                "container_id_type": "chat",
+                "container_id": chat_id,
+                "page_size": 50,
+                "sort_type": "ByCreateTimeDesc",
+            }
+            if page_token:
+                params["page_token"] = page_token
+            try:
+                resp = requests.get(
+                    "https://open.feishu.cn/open-apis/im/v1/messages",
+                    headers=self._headers(),
+                    params=params,
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as e:
+                print(f"[Feishu] list_messages request failed: {e}")
+                break
+
+            page = data.get("data", {}).get("items", [])
+            if not page:
+                break
+
+            for msg in page:
+                mid = msg.get("message_id", "")
+                if mid in seen_ids:
+                    continue
+                seen_ids.add(mid)
+
+                # Stop as soon as we see the last known message
+                if stop_at_id and mid == stop_at_id:
+                    return messages
+                messages.append(msg)
+
+            # Pagination
+            has_more = data.get("data", {}).get("has_more", False)
+            page_token = data.get("data", {}).get("page_token", "")
+            if not has_more or not page_token:
+                break
+
+        return messages
 
     # ── Message sending ────────────────────────────────
 

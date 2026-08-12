@@ -149,17 +149,16 @@ def run_poll():
             last_id = state["last_message_ids"].get(chat_id, "")
             print(f"\n[Feishu] chat={chat_id[:12]}... last_id={last_id[:16] if last_id else 'none'}")
 
-            messages = bot.list_messages(chat_id, page_size=50)
+            # list_messages now paginates automatically, stopping when it sees last_id
+            messages = bot.list_messages(chat_id, stop_at_id=last_id or None)
             if not messages:
-                print("  → no messages returned")
+                print("  → no new messages")
                 continue
 
             # Build input list for _process_texts
             fresh = []
             for msg in messages:
                 mid = msg.get("message_id", "")
-                if mid == last_id:
-                    break
                 if mid in old_ids:
                     continue
                 # Parse content
@@ -333,6 +332,25 @@ def run_lookup_id():
         print("   Feishu Admin Console -> Members -> click yourself -> copy Open ID")
 
 
+def run_find_chat():
+    """List all chats the bot is in, to find the right chat_id."""
+    from server.sources.feishu_bot import FeishuBot
+
+    bot = FeishuBot()
+    chats = bot.list_chats()
+    if not chats:
+        print("No chats found. Is the bot in any conversations?")
+        return
+    print(f"\n=== {len(chats)} chat(s) found ===\n")
+    for c in chats:
+        chat_id = c.get("chat_id", "")
+        name = c.get("name", "(no name / DM)")
+        chat_type = c.get("chat_type", "?")
+        print(f"  [{chat_type}] {name}")
+        print(f"    chat_id: {chat_id}")
+        print()
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "poll"
     if mode == "poll":
@@ -344,8 +362,10 @@ def main():
         run_remind()
     elif mode == "lookup-id":
         run_lookup_id()
+    elif mode == "find-chat":
+        run_find_chat()
     else:
-        print(f"Usage: python -m server.main [poll|remind|all|lookup-id]")
+        print(f"Usage: python -m server.main [poll|remind|all|lookup-id|find-chat]")
         sys.exit(1)
 
 
