@@ -32,92 +32,83 @@
 
 ---
 
-## 功能
+## 部署流程
 
-- 🔍 自动识别 4 个信息源里的截止时间
-- 🧠 LLM 理解中文时间表达（「下周五前」「月底前」「8 月 20 日前」）
-- 📊 自动去重，同一件事不会存两遍；已过期的 DDL 不会写入
-- ⏰ 到期前 7 / 3 / 1 天提醒 + 新增通知（由飞书自动化实现）
-- 🆓 零成本：GitHub Actions 免费额度 + DeepSeek（每次提取约 $0.001）
-- 📦 零服务器：没有 Docker、没有 VPS、没有常驻进程
+整个部署拆成「**自动**」和「**手动**」两部分。能自动的，**双击 `setup.py`（或 `setup.bat`）全帮你做了**；必须手动的（飞书没有开放接口），脚本最后会打印清单一步步提醒你。
 
----
+### ✅ 全自动 —— 双击 setup.py 帮你做
 
-## 快速开始
+| 步骤 | 做什么 |
+|------|--------|
+| 生成配置 | 自动生成 `.env` 文件模板 |
+| 创建多维表格 | 调用飞书接口自动建一个多维表格，并拿到 token |
+| 创建字段 | 自动建好 8 个字段（标题/状态/截止日期/…），字段名精确匹配代码 |
+| 写回配置 | 把表格 token 自动写回 `.env` |
+| 写 Secrets | （可选）用 `gh` CLI 把你 `.env` 里的配置批量写入 GitHub Secrets |
 
-```bash
-# 1. Fork 本仓库，clone 到本地，运行引导脚本：
-#    python setup.py
-#    它会带你填配置、自动建多维表格字段、写 .env，并可选帮你写 GitHub Secrets
+> ⚠️ 唯一要注意的：**密钥（API Key、App Secret）不要在任何对话框里输入，全部填进 `.env` 文件**，脚本会去读它。
 
-# 2. 手动完成剩下的飞书配置（见下一节「连接飞书」）：
-#    开机器人 + 把机器人拉进群 + 配自动化
+### ✋ 必须手动 —— 飞书/平台没有开放接口，谁都做不了
 
-# 3. 完成。GitHub Actions 每天 09:00（北京时间）自动跑一次。
-#    也可以到 Actions 页手动 workflow_dispatch 触发测试。
+1. 在[飞书开放平台](https://open.feishu.cn)创建「企业自建应用」，拿 App ID / App Secret
+2. 开通权限（读取群消息、多维表格读写、知识库读取）+ 打开「机器人」能力
+3. 发布应用（可能需要管理员审批）
+4. 把机器人拉进要监听的飞书群
+5. 多维表格里加「剩余天数」公式列 + 配 2 条自动化提醒
+6. 启用 GitHub Actions
+
+### 完整流程
+
+```
+第 1 步  装 git + Python，Fork 本仓库，clone 到本地
+第 2 步  飞书开放平台建自建应用 + 开通权限（手动，跑脚本前先做）
+第 3 步  双击 setup.py → 生成 .env → 用记事本填好密钥 → 按回车
+         （脚本自动：建多维表格 + 建字段 + 可选写 GitHub Secrets）
+第 4 步  照脚本最后打印的清单手动收尾（发布、拉群、配自动化）
+第 5 步  Actions 手动触发一次测试 → 收工
 ```
 
 ---
 
-## 连接飞书（重点）
+## 连接飞书（三块）
 
-飞书侧有三块要配置：**自建应用**（读群消息）、**多维表格**（存数据）、**自动化**（发提醒）。三者互相关联，按顺序来。
+飞书侧有三块配置：**自建应用**（读群消息）、**多维表格**（存数据）、**自动化**（发提醒）。其中多维表格这步 `setup.py` 会自动帮你建好，你只需要做自建应用和自动化。
 
-### 1. 飞书自建应用 —— 负责读群消息 + 写表格
+### 1. 飞书自建应用 —— 读群消息 + 写表格
 
-1. 到 [飞书开放平台](https://open.feishu.cn) → 创建「企业自建应用」。
-2. 在「凭证与基础信息」拿到 **App ID** 和 **App Secret**（对应 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`）。
+1. [飞书开放平台](https://open.feishu.cn) → 创建「企业自建应用」。
+2. 「凭证与基础信息」拿 **App ID** / **App Secret**（填进 `.env` 的 `FEISHU_APP_ID` / `FEISHU_APP_SECRET`）。
 3. 打开「机器人」能力。
-4. 在「权限管理」里勾选并开通：
-   - 读取群消息（`im:message`）
-   - 多维表格读写（`bitable:app`）
-   - 知识库读取（用于解析表格 token，`wiki:*` 相关）
-5. 把机器人拉进你要监听的飞书群，拿到群的 **chat_id**（对应 `FEISHU_GROUP_IDS`，多个用逗号分隔）。
+4. 「权限管理」勾选并开通：读取群消息（`im:message`）、多维表格读写（`bitable:app`）、知识库读取（`wiki:*`）。
+5. 发布应用（可能要管理员审批）。
 
-### 2. 多维表格（Bitable）—— 负责存 DDL
+> 步骤 4 的「多维表格读写」权限必须在跑 setup.py **之前**开通，否则脚本自动建表格会失败。
 
-1. 新建一个多维表格（建议放进知识库，方便取 token），建好以下字段：
+### 2. 多维表格（Bitable）—— 存 DDL
 
-   | 字段 | 类型 | 说明 |
-   |------|------|------|
-   | 标题 | 文本 | DDL 标题（LLM 生成） |
-   | 状态 | 单选 | 待办 / 已完成 / 已忽略（自动化按钮会改它） |
-   | 截止日期 | 日期 | 截止时间 |
-   | 描述 | 文本 | 内容摘要 |
-   | 来源 | 文本 | 来自哪个群/邮箱/公众号 |
-   | 原始文本 | 文本 | 原始消息全文（方便回看） |
-   | 提醒状态 | 文本 | 预留 |
-   | 添加日期 | 日期 | 入库日期 |
-   | 剩余天数 | 公式 | `DATEDIF(TODAY(), 截止日期, "D")`，给自动化用 |
+**由 `setup.py` 自动创建**，字段如下（手动建表时的参考）：
 
-2. 拿到 token（`python setup.py` 能自动帮你建字段并解析 token）：
-   - `FEISHU_APP_TOKEN`：多维表格的 app_token，就是链接里 `/base/` 后面那一串（`bascn...`）。**首选，直接填这个。**
-   - `FEISHU_TABLE_ID`：数据表的 table_id，就是链接里 `table=tbl...` 那一段。
-   - `FEISHU_WIKI_TOKEN`：备选。如果你只拿得到知识库节点 token（`/wiki/` 后面那串），填它也能跑，代码会自动解析出 app_token。
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| 标题 | 文本 | DDL 标题（LLM 生成） |
+| 状态 | 单选 | 待办 / 已完成 / 已忽略（自动化按钮会改它） |
+| 截止日期 | 日期 | 截止时间 |
+| 描述 | 文本 | 内容摘要 |
+| 来源 | 文本 | 来自哪个群/邮箱/公众号 |
+| 原始文本 | 文本 | 原始消息全文（方便回看） |
+| 提醒状态 | 文本 | 预留 |
+| 添加日期 | 日期 | 入库日期 |
+| 剩余天数 | 公式 | `DATEDIF(TODAY(), 截止日期, "D")`，给自动化用 |
 
-   > 字段（标题/状态/截止日期…）用 `python setup.py` 自动建，避免手建 8 个字段拼错名；「剩余天数」公式列留到第 3 步手动加。
+> 代码写入时「状态」固定填「待办」，已过期的 DDL 会自动跳过。
 
-3. 代码写入时，**状态固定填「待办」**，已过期的 DDL 会自动跳过。
+### 3. 飞书自动化 —— 提醒
 
-### 3. 飞书自动化 —— 负责提醒
+提醒完全由多维表格自带的「自动化」实现。打开多维表格 → 右上角「自动化」→ 新建两条规则：
 
-提醒完全由多维表格自带的「自动化」实现，代码不参与。打开多维表格 → 右上角「自动化」→ 新建两条规则：
+**规则 A · 新增 DDL 通知**：触发器=记录新增 → 发消息/卡片到群。
 
-**规则 A · 新增 DDL 通知**
-
-- 触发器：记录被新增时
-- 动作：发送消息/卡片到群（或私聊自己），内容带上「标题」和「截止日期」
-
-**规则 B · 到期提醒（7 / 3 / 1 天）**
-
-- 前提：先加好上面的「剩余天数」公式列
-- 触发器：每天定时（例如 09:30）
-- 条件：`剩余天数 ∈ {7, 3, 1}`
-- 动作：发送卡片，卡片里放两个按钮：
-  - 「完成」→ 把「状态」改为「已完成」
-  - 「忽略」→ 把「状态」改为「已忽略」
-
-这样每条 DDL 会在到期前 7 天、3 天、1 天各提醒一次，点按钮即可标记处理。
+**规则 B · 到期提醒（7/3/1 天）**：触发器=每天 09:30 → 条件=剩余天数∈{7,3,1} → 发带「完成」「忽略」按钮的卡片（点按钮把「状态」改成已完成/已忽略）。
 
 ---
 
@@ -136,6 +127,8 @@
 
 ## 配置（GitHub Secrets）
 
+这些配置都存在 `.env` 里（本地调试用），生产环境填到 GitHub Secrets（`setup.py` 可帮你批量写入）。
+
 | Secret | 必填 | 说明 |
 |--------|------|------|
 | `LLM_API_KEY` | ✅ 是 | DeepSeek / OpenAI 兼容 API Key |
@@ -144,9 +137,8 @@
 | `FEISHU_APP_ID` | ✅* | 飞书自建应用 App ID |
 | `FEISHU_APP_SECRET` | ✅* | 飞书自建应用密钥 |
 | `FEISHU_GROUP_IDS` | 否 | 监听群 chat_id，逗号分隔 |
-| `FEISHU_APP_TOKEN` | ✅* | 多维表格 app_token（链接 `/base/` 后那串，首选） |
-| `FEISHU_WIKI_TOKEN` | 备选 | 知识库节点 token（没 app_token 时用） |
-| `FEISHU_TABLE_ID` | ✅* | 数据表 table_id |
+| `FEISHU_APP_TOKEN` | ✅* | 多维表格 app_token（setup.py 自动填） |
+| `FEISHU_TABLE_ID` | ✅* | 数据表 table_id（setup.py 自动填） |
 | `EMAIL_HOST` | 否 | IMAP 服务器（如 `imap.qq.com`） |
 | `EMAIL_PORT` | 否 | IMAP 端口（默认 993） |
 | `EMAIL_USER` | 否 | 邮箱账号 |
@@ -162,39 +154,40 @@
 
 ```
 dontmissddl/
-├── setup.py                    ← 部署引导脚本（python setup.py）
+├── setup.py                    ← 一键部署脚本（双击运行）
+├── setup.bat                   ← Windows 双击入口
 ├── server/
-│   ├── main.py                  ← 入口：poll 拉取并写入多维表格
-│   ├── extract.py               ← LLM 提取 DDL
+│   ├── main.py                 ← 入口：poll 拉取并写入多维表格
+│   ├── extract.py              ← LLM 提取 DDL
 │   └── sources/
-│       ├── feishu_bot.py        ← 飞书群消息读取
-│       ├── feishu_bitable.py    ← 多维表格写入
-│       ├── email_source.py      ← 邮箱 IMAP
-│       ├── wechat_sogou.py      ← 公众号（搜狗搜索）
-│       └── wechat_rss.py        ← 公众号（RSS）
+│       ├── feishu_bot.py       ← 飞书群消息读取
+│       ├── feishu_bitable.py   ← 多维表格写入
+│       ├── email_source.py     ← 邮箱 IMAP
+│       ├── wechat_sogou.py     ← 公众号（搜狗搜索）
+│       └── wechat_rss.py       ← 公众号（RSS）
 ├── prompts/
-│   └── extract-ddl.md           ← 提取提示词
+│   └── extract-ddl.md          ← 提取提示词
 ├── data/
-│   └── state.json               ← 去重锚点（增量拉取的游标）
+│   └── state.json              ← 去重锚点（增量拉取的游标）
 ├── .github/workflows/
-│   └── cron.yml                 ← 每天定时跑 poll
-└── .env.example                 ← 环境变量样例
+│   └── cron.yml                ← 每天定时跑 poll
+└── .env.example                ← 环境变量样例
 ```
 
 ---
 
 ## English
 
-**dontmissddl** is a zero-server, zero-cost DDL reminder. It monitors Feishu groups, email inbox, and WeChat public accounts, extracts deadlines with an LLM (DeepSeek), stores them in a Feishu Bitable, and sends reminders via Feishu automation. Everything runs on GitHub Actions' free tier — no server, no database, no running process to maintain.
+**dontmissddl** is a zero-server, zero-cost DDL reminder. It monitors Feishu groups, email inbox, and WeChat public accounts, extracts deadlines with an LLM (DeepSeek), stores them in a Feishu Bitable, and sends reminders via Feishu automation. Everything runs on GitHub Actions' free tier.
 
 **Pipeline:** GitHub Actions (daily 09:00 Beijing) → poll 4 sources → LLM extraction → write Feishu Bitable → Feishu automation sends reminders (new-DDL notice + 7/3/1-day alerts with "ignore/done" buttons).
 
-**Feishu side (three pieces):**
-1. **Custom app** — reads group messages and writes the Bitable (`FEISHU_APP_ID`/`SECRET`, bot capability, `im:message` + `bitable:app` + wiki permissions).
-2. **Bitable** — the database. Fields: 标题 / 状态 / 截止日期 / 描述 / 来源 / 原始文本 / 提醒状态 / 添加日期 / 剩余天数(formula). Provide its wiki node token (`FEISHU_WIKI_TOKEN`) and table id (`FEISHU_TABLE_ID`); the code resolves the app_token automatically.
-3. **Automation** — the reminder scheduler. Rule A notifies on new records; Rule B runs daily and fires when 剩余天数 ∈ {7,3,1}, sending a card with "完成/忽略" buttons that update 状态.
+**Setup is split into automated vs manual:**
+- **Automated** (double-click `setup.py`): generates `.env`, creates the Bitable + its 8 fields via Feishu API, writes tokens back to `.env`, and (optionally) bulk-writes GitHub Secrets via `gh`.
+- **Manual** (no public API exists): create the Feishu app + grant permissions + enable bot, publish the app, add the bot to groups, add the 剩余天数 formula column, configure the 2 automation rules, enable Actions.
+- **Keys never go in a dialog** — fill them in the `.env` file; the script reads from there.
 
-**Getting started:** fork this repo → run `python setup.py` (interactive guide that creates Bitable fields, writes `.env`, and can set GitHub Secrets) → finish the few manual Feishu steps → done.
+**Getting started:** install git + Python → fork & clone → create the Feishu app & grant permissions → double-click `setup.py` → fill `.env` → press Enter → follow the printed manual checklist → trigger a test run.
 
 ---
 
