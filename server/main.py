@@ -1,9 +1,11 @@
 """dontmissddl — Main entry point. Runs in GitHub Actions, not a long-lived server.
 
-This script does two things (controlled by --mode):
-  poll    — Fetch recent content from Feishu/Email/RSS, extract DDLs via LLM
-  remind  — Check upcoming DDLs, send Feishu reminders
+Fetches recent content from Feishu/Email/WeChat, extracts DDLs via LLM, and
+writes them to the configured storage backend (Feishu Bitable). Reminders are
+handled by Feishu Bitable automation, not here.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -21,12 +23,11 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).parent.parent
 load_dotenv(ROOT / ".env", encoding="utf-8")  # load .env before reading os.environ
 DATA_DIR = ROOT / "data"
-DDLS_FILE = DATA_DIR / "ddls.json"
 STATE_FILE = DATA_DIR / "state.json"
 
 
 # ═══════════════════════════════════════════════════
-# JSON-backed storage (no SQLite → git-friendly)
+# State (dedup anchors for incremental fetching)
 # ═══════════════════════════════════════════════════
 
 def _load_json(path: Path) -> dict | list:
@@ -38,14 +39,6 @@ def _load_json(path: Path) -> dict | list:
 def _save_json(path: Path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def load_ddls() -> list[dict]:
-    return _load_json(DDLS_FILE) if isinstance(_load_json(DDLS_FILE), list) else []
-
-
-def save_ddls(items: list[dict]):
-    _save_json(DDLS_FILE, items)
 
 
 def load_state() -> dict:
@@ -67,12 +60,12 @@ def save_state(state: dict):
 
 
 # ═══════════════════════════════════════════════════
-# Poll: fetch messages → extract DDLs
+# Poll: fetch messages → extract DDLs → write storage
 # ═══════════════════════════════════════════════════
 
 def _process_texts(texts: list[dict], state: dict, ddls: list[dict]) -> int:
     """Run LLM extraction on a batch of texts from any source.
-    Returns number of new DDLs saved.
+    Returns number of new DDLs found.
     """
     from server.extract import extract_ddl
 
@@ -120,7 +113,6 @@ def _process_texts(texts: list[dict], state: dict, ddls: list[dict]) -> int:
                 "source_group": item.get("source_group", ""),
                 "source_url": item.get("source_url", ""),
                 "raw_text": text,
-                "notified_dates": [],
                 "created_at": datetime.now(timezone.utc).isoformat(),
             })
             print(f"    [+] {ddl['title']} -> {ddl['deadline']}")
@@ -134,10 +126,9 @@ def _process_texts(texts: list[dict], state: dict, ddls: list[dict]) -> int:
 def run_poll():
     from server.sources.feishu_bot import FeishuBot
     from server.sources.email_source import fetch_recent_emails
-    from server.sources.wechat_rss import fetch_wechat_articles
 
     state = load_state()
-    ddls = load_ddls()
+    ddls = []  # 本次运行收集到的 DDL（内存中，直接写存储，不落盘）
     total_new = 0
 
     # ── Source 1: Feishu ──
@@ -201,13 +192,7 @@ def run_poll():
         total_new += _process_texts(emails, state, ddls)
         state["last_email_uid"] = str(max_uid)
 
-    # ── Source 3: WeChat RSS ──
-    print("\n[Source] WeChat RSS...")
-    articles = fetch_wechat_articles()
-    if articles:
-        total_new += _process_texts(articles, state, ddls)
-
-    # ── Source 4: Sogou WeChat Search ──
+    # ── Source 3: Sogou WeChat Search ──
     from server.sources.wechat_sogou import fetch_sogou_articles
 
     print("\n[Source] Sogou WeChat...")
@@ -220,144 +205,28 @@ def run_poll():
             all_links.update(new_sogou_links)
             state["seen_sogou_links"] = list(all_links)[-500:]
 
-    if total_new > 0:
-        save_ddls(ddls)
+    # ── 写入存储 ──
+    from server.storage import get_storage
 
-    # ── Sync to Bitable ──
-    table_id = os.environ.get("FEISHU_TABLE_ID", "")
-    app_token = os.environ.get("FEISHU_APP_TOKEN", "")
-    if table_id and (app_token or os.environ.get("FEISHU_WIKI_TOKEN")):
-        from server.sources.feishu_bitable import FeishuBitable, build_ddl_fields
-
-        print("\n[Bitable] Syncing to multidimensional table...")
-        bt = FeishuBitable()
-        if not app_token:
-            app_token = bt.resolve_bitable_token(os.environ.get("FEISHU_WIKI_TOKEN", ""))
-        if app_token:
-            existing = bt.list_records(app_token, table_id)
-            # Build a set of (title, deadline) already in the table
-            seen_in_table: set[tuple[str, str]] = set()
-            for rec in existing:
-                f = rec.get("fields", {})
-                t = f.get("标题", "")
-                d = ""
-                dl_ts = f.get("截止日期")
-                if dl_ts:
-                    from datetime import datetime as _dt, timezone as _tz
-                    try:
-                        d = _dt.fromtimestamp(dl_ts / 1000, tz=_tz.utc).isoformat()
-                    except Exception:
-                        pass
-                seen_in_table.add((t, d))
-
-            # Collect new DDLs not yet in the table (skip past deadlines)
-            new_fields = []
-            for ddl in ddls:
-                key = (ddl.get("title", ""), ddl.get("deadline", ""))
-                if key in seen_in_table:
-                    continue
-                fields = build_ddl_fields(ddl)
-                if fields is None:
-                    continue  # past deadline
-                new_fields.append(fields)
-                seen_in_table.add(key)
-
-            if new_fields:
-                n = bt.add_records(app_token, table_id, new_fields)
-                print(f"[Bitable] {n} new record(s) written, {len(new_fields) - n} failed.")
-            else:
-                print("[Bitable] All DDLs already in table, nothing to add.")
+    storage = get_storage()
+    if storage is None:
+        print("\n[Storage] 未配置存储（FEISHU_APP_TOKEN / FEISHU_TABLE_ID），跳过写入。")
+    else:
+        print("\n[Storage] 写入飞书多维表格...")
+        existing = storage.list_existing()
+        to_add = [d for d in ddls if (d.get("title"), d.get("deadline")) not in existing]
+        if to_add:
+            n = storage.add(to_add)
+            print(f"[Storage] {n} 条新记录写入，{len(to_add) - n} 条失败。")
         else:
-            print("[Bitable] Could not resolve wiki token to Bitable app_token.")
+            print("[Storage] 全部已存在，无新增。")
 
     save_state(state)
-    print(f"\nDone: {total_new} new DDL(s) saved, {len(ddls)} total")
+    print(f"\nDone: 提取 {total_new} 个新 DDL")
 
 
 # ═══════════════════════════════════════════════════
-# Remind: check upcoming DDLs → send notifications
-# ═══════════════════════════════════════════════════
-
-def run_remind():
-    from server.sources.feishu_bot import FeishuBot
-
-    bot = FeishuBot()
-    ddls = load_ddls()
-    now = datetime.now(timezone.utc)
-
-    days_str = os.environ.get("REMINDER_DAYS", "7,3,1")
-    days_list = [int(d.strip()) for d in days_str.split(",") if d.strip()]
-
-    my_open_id = os.environ.get("FEISHU_MY_OPEN_ID", "")
-
-    sent = 0
-    modified = False
-
-    for item in ddls:
-        try:
-            deadline_dt = datetime.fromisoformat(item["deadline"])
-            # Make offset-naive datetimes UTC-aware
-            if deadline_dt.tzinfo is None:
-                deadline_dt = deadline_dt.replace(tzinfo=timezone.utc)
-        except (ValueError, KeyError):
-            continue
-
-        days_left = (deadline_dt - now).days
-
-        # Skip past deadlines
-        if days_left < 0:
-            continue
-
-        for days_before in days_list:
-            if days_left != days_before:
-                continue
-
-            notified = item.get("notified_dates", [])
-            if isinstance(notified, str):
-                notified = json.loads(notified) if notified else []
-            if days_before in notified:
-                continue
-
-            deadline_short = deadline_dt.strftime("%m月%d日 %H:%M")
-            source_info = ""
-            if item.get("source") == "email":
-                source_info = f"\n[Email] {item.get('source_group', '')}"
-            elif item.get("source") == "wechat_rss":
-                source_info = f"\n[RSS] {item.get('source_group', '')}"
-
-            text = (
-                f"[DDL Reminder] {item['title']}\n"
-                f"Deadline: {deadline_short}\n"
-                f"{days_before} day(s) left"
-                f"{source_info}"
-            )
-
-            sent_ok = False
-            # Prefer DM to user, fall back to source group
-            if my_open_id:
-                sent_ok = bot.send_dm(my_open_id, text)
-                dest = f"DM({my_open_id[:12]}...)"
-            else:
-                chat_id = item.get("source_group", "")
-                if chat_id:
-                    sent_ok = bot.send_text(chat_id, text)
-                    dest = f"group({chat_id[:12]}...)"
-
-            if sent_ok:
-                notified.append(days_before)
-                item["notified_dates"] = notified
-                sent += 1
-                modified = True
-                print(f"[REMIND] {item['title']} ({days_before}d) → {dest}")
-            break  # only notify once per run per item
-
-    if modified:
-        save_ddls(ddls)
-    print(f"Remind done: {sent} notification(s) sent")
-
-
-# ═══════════════════════════════════════════════════
-# CLI
+# CLI helpers (setup-time, not part of the daily run)
 # ═══════════════════════════════════════════════════
 
 def run_lookup_id():
@@ -408,21 +277,20 @@ def run_find_chat():
         print()
 
 
+# ═══════════════════════════════════════════════════
+# CLI
+# ═══════════════════════════════════════════════════
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "poll"
     if mode == "poll":
         run_poll()
-    elif mode == "remind":
-        run_remind()
-    elif mode == "all":
-        run_poll()
-        run_remind()
     elif mode == "lookup-id":
         run_lookup_id()
     elif mode == "find-chat":
         run_find_chat()
     else:
-        print(f"Usage: python -m server.main [poll|remind|all|lookup-id|find-chat]")
+        print(f"Usage: python -m server.main [poll|lookup-id|find-chat]")
         sys.exit(1)
 
 

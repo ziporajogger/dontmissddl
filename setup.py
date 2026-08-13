@@ -5,7 +5,7 @@
 必须手动的那几步（发布应用、拉群、配自动化等），脚本最后会打印清单提醒你。
 
 用法：
-    Windows：双击 setup.py（或 setup.bat）
+    Windows：双击 start.bat
     其它平台：python setup.py
 """
 
@@ -13,12 +13,23 @@ import shutil
 import subprocess
 import sys
 
+if sys.version_info < (3, 9):
+    print(f"Python 版本过低：需要 3.9+，当前 {sys.version.split()[0]}。")
+    print("请到 https://www.python.org/downloads/ 下载安装，勾选 Add to PATH。")
+    input("按回车键退出...")
+    sys.exit(1)
+
 try:
     import requests
 except ImportError:
-    print("缺少依赖 requests。请先打开命令行运行：  pip install requests")
-    input("按回车键退出...")
-    sys.exit(1)
+    print("缺少依赖 requests，正在自动安装...")
+    subprocess.run([sys.executable, "-m", "pip", "install", "requests"], check=False)
+    try:
+        import requests
+    except ImportError:
+        print("自动安装失败，请手动运行：  pip install requests")
+        input("按回车键退出...")
+        sys.exit(1)
 
 from pathlib import Path
 
@@ -164,15 +175,47 @@ def main():
     print("  能自动化的全部自动化；必须手动的最后打印清单提醒你")
     print("=" * 62)
     print()
-    print("  前置：请先在飞书开放平台创建好「企业自建应用」，并开通权限：")
-    print("        读取群消息、多维表格读写、知识库读取。")
-    print("        （否则下面自动建表格会失败。）")
+    print("  前置：请先在飞书开放平台创建好「企业自建应用」，并开通")
+    print("        「多维表格读写」权限（必须，用于写表格）。")
+    print("        如果要监听飞书群，再额外开通「读取群消息」权限。")
     print()
 
     ensure_env_template()
     print(f"  请用记事本打开根目录的 {ENV_FILE.name}，填好配置。")
     print("  密钥都在文件里填，不要在对话框输入。")
-    print("  必填：LLM_API_KEY、FEISHU_APP_ID、FEISHU_APP_SECRET。")
+    print()
+    print("  先告诉我你要监控哪些信息源（可多选，用逗号分隔）：")
+    print("    1. 飞书群聊    2. 邮箱    3. 公众号（搜狗搜索）")
+    print("    直接按回车 = 跳过，稍后自己在 .env 里填")
+    choice = input("  你的选择（如 1,3）: ").strip()
+    print()
+
+    print("  【必填】写表格用，跟选哪个信息源无关：")
+    print("    · LLM_API_KEY           → platform.deepseek.com 注册后，左侧「API Keys」新建")
+    print("    · FEISHU_APP_ID/SECRET  → open.feishu.cn 自建应用「凭证与基础信息」")
+    print()
+
+    if "1" in choice:
+        print("  【飞书群聊】填 FEISHU_GROUP_IDS（群 chat_id）：")
+        print("    先给应用开「读取群消息」+ 打开「机器人」，把机器人拉进群，")
+        print("    然后命令行跑  python -m server.main find-chat  能列出所有群的 chat_id。")
+        print()
+
+    if "2" in choice:
+        print("  【邮箱】填 EMAIL_HOST / EMAIL_PORT / EMAIL_USER / EMAIL_PASSWORD：")
+        print("    QQ 邮箱   → imap.qq.com:993，密码填「授权码」")
+        print("    163 邮箱  → imap.163.com:993，密码填「授权码」")
+        print("    126 邮箱  → imap.126.com:993，密码填「授权码」")
+        print("    Gmail     → imap.gmail.com:993，密码填「应用专用密码」")
+        print("    Outlook   → outlook.office365.com:993，密码填「应用密码」")
+        print("    授权码在邮箱「设置 → 账户 → 开启 IMAP」里生成。")
+        print()
+
+    if "3" in choice:
+        print("  【公众号】填 WECHAT_SOGOU_NAMES：")
+        print("    就是公众号昵称，多个用英文逗号分隔，如：字节跳动招聘,腾讯招聘。")
+        print()
+
     input("  填好并保存后，回到这里按回车继续...")
     print()
 
@@ -183,6 +226,14 @@ def main():
         print(f"  ❌ 还缺必填项：{', '.join(missing)}。请填好再重新运行本脚本。")
         input("  按回车退出...")
         return
+
+    sources = [k for k in ("FEISHU_GROUP_IDS", "EMAIL_USER",
+                           "WECHAT_SOGOU_NAMES") if cfg.get(k)]
+    if not sources:
+        print("  ⚠ 你还没配置任何信息源（飞书群 / 邮箱 / 公众号）。")
+        print("    建议去 .env 里填一个（FEISHU_GROUP_IDS / EMAIL_USER / WECHAT_SOGOU_NAMES）。")
+        print("    也可以先继续，稍后再补。")
+        print()
 
     try:
         token = get_tenant_token(cfg["FEISHU_APP_ID"], cfg["FEISHU_APP_SECRET"])
@@ -258,15 +309,15 @@ def main():
     print("=" * 62)
     print("  剩下这些必须手动完成（飞书没有开放接口，脚本无法代劳）：")
     print("=" * 62)
-    print("  1. 飞书开放平台 → 自建应用：打开「机器人」能力，然后发布应用")
-    print("     （可能需要管理员审批）。")
-    print("  2. 把机器人拉进要监听的飞书群，确认 .env 里 FEISHU_GROUP_IDS 填对。")
-    print("  3. 打开刚建的多维表格，加一个公式列「剩余天数」：")
+    print("  1. 飞书开放平台 → 自建应用：发布应用（可能要管理员审批）。")
+    if cfg.get("FEISHU_GROUP_IDS"):
+        print("     · 你选了飞书群：记得打开「机器人」能力，并把机器人拉进群。")
+    print("  2. 打开刚建的多维表格，加一个公式列「剩余天数」：")
     print('     = DATEDIF(TODAY(), 截止日期, "D")')
-    print("  4. 多维表格右上角「自动化」→ 新建两条规则：")
+    print("  3. 多维表格右上角「自动化」→ 新建两条规则：")
     print("     A. 触发=记录新增 → 发通知")
     print("     B. 触发=每天 09:30，条件=剩余天数∈{7,3,1} → 发带「完成/忽略」按钮的卡片")
-    print("  5. 仓库 Settings → Actions 启用；Actions 页手动触发一次 workflow_dispatch 测试。")
+    print("  4. 仓库 Settings → Actions 启用；Actions 页手动触发一次 workflow_dispatch 测试。")
     print()
     print("  完成。之后每天 09:00 自动收集写入，09:30 飞书自动化提醒。")
     print("=" * 62)

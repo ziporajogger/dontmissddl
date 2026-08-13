@@ -30,14 +30,14 @@ jobs:
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_APP_TOKEN: ${{ secrets.FEISHU_APP_TOKEN }}
+          FEISHU_TABLE_ID: ${{ secrets.FEISHU_TABLE_ID }}
           FEISHU_GROUP_IDS: ${{ secrets.FEISHU_GROUP_IDS }}
           EMAIL_HOST: ${{ secrets.EMAIL_HOST }}
           EMAIL_PORT: ${{ secrets.EMAIL_PORT }}
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           WECHAT_SOGOU_NAMES: ${{ secrets.WECHAT_SOGOU_NAMES }}
-          FEISHU_WIKI_TOKEN: ${{ secrets.FEISHU_WIKI_TOKEN }}
-          FEISHU_TABLE_ID: ${{ secrets.FEISHU_TABLE_ID }}
         run: python -m server.main poll
 
       - name: Commit updated data
@@ -45,5 +45,5 @@ jobs:
           git config user.name "dontmissddl-bot"
           git config user.email "bot@dontmissddl"
           git add data/state.json
-          git diff --staged --quiet || git commit -m "chore: update ddls [skip ci]"
+          git diff --staged --quiet || git commit -m "chore: update state [skip ci]"
           git push

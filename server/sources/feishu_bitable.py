@@ -37,33 +37,6 @@ class FeishuBitable:
             "Content-Type": "application/json; charset=utf-8",
         }
 
-    # ── Wiki → Bitable token ──────────────────────────
-
-    def resolve_bitable_token(self, wiki_token: str) -> str | None:
-        """Resolve a wiki node token to its Bitable app_token."""
-        try:
-            resp = requests.get(
-                f"https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node",
-                headers=self._headers(),
-                params={"token": wiki_token},
-                timeout=10,
-            )
-            data = resp.json()
-            if data.get("code") != 0:
-                print(f"[Bitable] get_node error: code={data.get('code')}, msg={data.get('msg')}")
-                return None
-            node = data.get("data", {}).get("node", {})
-            obj_type = node.get("obj_type", "")
-            obj_token = node.get("obj_token", "")
-            if obj_type != "bitable":
-                print(f"[Bitable] Not a Bitable node: obj_type={obj_type}")
-                return None
-            print(f"[Bitable] Resolved app_token: {obj_token}")
-            return obj_token
-        except Exception as e:
-            print(f"[Bitable] resolve error: {e}")
-            return None
-
     # ── Records ───────────────────────────────────────
 
     def list_records(self, app_token: str, table_id: str,
@@ -149,7 +122,6 @@ def _format_source(source: str, source_group: str) -> str:
     labels = {
         "email": "📧 邮件",
         "feishu": "💬 飞书群聊",
-        "wechat_rss": "📰 公众号RSS",
         "sogou_wechat": "📰 公众号",
         "manual": "✍️ 手动添加",
     }
@@ -207,5 +179,5 @@ def build_ddl_fields(ddl: dict) -> dict | None:
         "来源": _format_source(ddl.get("source", "unknown"), ddl.get("source_group", "")),
         "原始文本": ddl.get("raw_text", "")[:5000],
         "提醒状态": "",
-        "添加日期": now_ts,
+        "添加日期": add_date_ts,
     }
