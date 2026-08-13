@@ -224,14 +224,15 @@ def run_poll():
         save_ddls(ddls)
 
     # ── Sync to Bitable ──
-    wiki_token = os.environ.get("FEISHU_WIKI_TOKEN", "")
     table_id = os.environ.get("FEISHU_TABLE_ID", "")
-    if wiki_token and table_id:
+    app_token = os.environ.get("FEISHU_APP_TOKEN", "")
+    if table_id and (app_token or os.environ.get("FEISHU_WIKI_TOKEN")):
         from server.sources.feishu_bitable import FeishuBitable, build_ddl_fields
 
         print("\n[Bitable] Syncing to multidimensional table...")
         bt = FeishuBitable()
-        app_token = bt.resolve_bitable_token(wiki_token)
+        if not app_token:
+            app_token = bt.resolve_bitable_token(os.environ.get("FEISHU_WIKI_TOKEN", ""))
         if app_token:
             existing = bt.list_records(app_token, table_id)
             # Build a set of (title, deadline) already in the table

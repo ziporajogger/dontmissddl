@@ -46,12 +46,12 @@
 ## 快速开始
 
 ```bash
-# 1. 配置飞书（见下一节「连接飞书」）
-#    建自建应用 + 建多维表格 + 配自动化
+# 1. Fork 本仓库，clone 到本地，运行引导脚本：
+#    python setup.py
+#    它会带你填配置、自动建多维表格字段、写 .env，并可选帮你写 GitHub Secrets
 
-# 2. Fork 本仓库，设置 GitHub Secrets
-#    Settings → Secrets and variables → Actions → New repository secret
-#    至少填：LLM_API_KEY + 飞书相关 + 一个信息源
+# 2. 手动完成剩下的飞书配置（见下一节「连接飞书」）：
+#    开机器人 + 把机器人拉进群 + 配自动化
 
 # 3. 完成。GitHub Actions 每天 09:00（北京时间）自动跑一次。
 #    也可以到 Actions 页手动 workflow_dispatch 触发测试。
@@ -90,11 +90,12 @@
    | 添加日期 | 日期 | 入库日期 |
    | 剩余天数 | 公式 | `DATEDIF(TODAY(), 截止日期, "D")`，给自动化用 |
 
-2. 拿到两个 token：
-   - `FEISHU_WIKI_TOKEN`：多维表格所在知识库节点的 token，就是分享链接里 `/wiki/` 后面那一串。
+2. 拿到 token（`python setup.py` 能自动帮你建字段并解析 token）：
+   - `FEISHU_APP_TOKEN`：多维表格的 app_token，就是链接里 `/base/` 后面那一串（`bascn...`）。**首选，直接填这个。**
    - `FEISHU_TABLE_ID`：数据表的 table_id，就是链接里 `table=tbl...` 那一段。
+   - `FEISHU_WIKI_TOKEN`：备选。如果你只拿得到知识库节点 token（`/wiki/` 后面那串），填它也能跑，代码会自动解析出 app_token。
 
-   > 代码启动时会用 `FEISHU_WIKI_TOKEN` 调知识库接口，自动解析出多维表格的 app_token，你不需要手动填 app_token。
+   > 字段（标题/状态/截止日期…）用 `python setup.py` 自动建，避免手建 8 个字段拼错名；「剩余天数」公式列留到第 3 步手动加。
 
 3. 代码写入时，**状态固定填「待办」**，已过期的 DDL 会自动跳过。
 
@@ -143,7 +144,8 @@
 | `FEISHU_APP_ID` | ✅* | 飞书自建应用 App ID |
 | `FEISHU_APP_SECRET` | ✅* | 飞书自建应用密钥 |
 | `FEISHU_GROUP_IDS` | 否 | 监听群 chat_id，逗号分隔 |
-| `FEISHU_WIKI_TOKEN` | ✅* | 多维表格知识库节点 token |
+| `FEISHU_APP_TOKEN` | ✅* | 多维表格 app_token（链接 `/base/` 后那串，首选） |
+| `FEISHU_WIKI_TOKEN` | 备选 | 知识库节点 token（没 app_token 时用） |
 | `FEISHU_TABLE_ID` | ✅* | 数据表 table_id |
 | `EMAIL_HOST` | 否 | IMAP 服务器（如 `imap.qq.com`） |
 | `EMAIL_PORT` | 否 | IMAP 端口（默认 993） |
@@ -160,6 +162,7 @@
 
 ```
 dontmissddl/
+├── setup.py                    ← 部署引导脚本（python setup.py）
 ├── server/
 │   ├── main.py                  ← 入口：poll 拉取并写入多维表格
 │   ├── extract.py               ← LLM 提取 DDL
@@ -191,7 +194,7 @@ dontmissddl/
 2. **Bitable** — the database. Fields: 标题 / 状态 / 截止日期 / 描述 / 来源 / 原始文本 / 提醒状态 / 添加日期 / 剩余天数(formula). Provide its wiki node token (`FEISHU_WIKI_TOKEN`) and table id (`FEISHU_TABLE_ID`); the code resolves the app_token automatically.
 3. **Automation** — the reminder scheduler. Rule A notifies on new records; Rule B runs daily and fires when 剩余天数 ∈ {7,3,1}, sending a card with "完成/忽略" buttons that update 状态.
 
-**Getting started:** fork this repo → set GitHub Secrets (`LLM_API_KEY` + Feishu + one source) → done.
+**Getting started:** fork this repo → run `python setup.py` (interactive guide that creates Bitable fields, writes `.env`, and can set GitHub Secrets) → finish the few manual Feishu steps → done.
 
 ---
 
