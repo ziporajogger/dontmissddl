@@ -3,3 +3,4 @@ __pycache__/
 .env
 *.png
 sogou_debug.png
+data/ddls.json
