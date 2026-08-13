@@ -191,7 +191,7 @@ def main():
     print()
 
     print("  【必填】写表格用，跟选哪个信息源无关：")
-    print("    · LLM_API_KEY           → platform.deepseek.com 注册后，左侧「API Keys」新建")
+    print("    · LLM_API_KEY           → 你所用大模型平台的 API Key（OpenAI 兼容即可）")
     print("    · FEISHU_APP_ID/SECRET  → open.feishu.cn 自建应用「凭证与基础信息」")
     print()
 
