@@ -173,17 +173,34 @@ def _fetch_article_text(page, url_or_path: str) -> tuple[str, str]:
         return ("", f"[fetch error: {e}]")
 
 
-def fetch_sogou_articles() -> list[dict]:
-    """Fetch articles from configured WeChat public account names via Sogou + Playwright."""
+def fetch_sogou_articles(skip_links: set | None = None) -> tuple[list[dict], set]:
+    """Fetch articles from configured WeChat public account names via Sogou + Playwright.
+
+    Args:
+        skip_links: set of already-seen Sogou links to skip (avoids re-scraping).
+
+    Returns:
+        results: list of article dicts
+        new_links: set of new Sogou links discovered this run
+    """
+
+    if skip_links is None:
+        skip_links = set()
 
     names_str = os.environ.get("WECHAT_SOGOU_NAMES", "")
     if not names_str:
         print("[Sogou] No WECHAT_SOGOU_NAMES configured, skipping.")
-        return []
+        return [], set()
 
     names = [n.strip() for n in names_str.split(",") if n.strip()]
-    results = []
+    results: list[dict] = []
+    new_links: set = set()
 
+    # How many articles to grab per account (default 30, configurable)
+    max_per_account = int(os.environ.get("WECHAT_SOGOU_MAX_ARTICLES", "30"))
+
+    # Filter out already-seen articles before launching browser
+    # (but we still need to search to know what's new)
     print(f"[Sogou] Launching browser...")
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
@@ -208,7 +225,7 @@ def fetch_sogou_articles() -> list[dict]:
         try:
             for name in names:
                 print(f"[Sogou] Searching: {name}")
-                articles = _search_account(page, name, max_articles=5)
+                articles = _search_account(page, name, max_articles=max_per_account)
                 print(f"  -> {len(articles)} articles")
 
                 for art in articles:
@@ -217,6 +234,11 @@ def fetch_sogou_articles() -> list[dict]:
                     sogou_link = art.get("link", "")
                     date = art.get("date", "")
 
+                    # Skip if we've already scraped this article before
+                    if sogou_link and sogou_link in skip_links:
+                        print(f"    [skip] already seen: {title[:40]}")
+                        continue
+
                     final_url, body = _fetch_article_text(page, sogou_link)
 
                     text = f"文章标题：{title}\n\n摘要：{summary}"
@@ -224,6 +246,9 @@ def fetch_sogou_articles() -> list[dict]:
                         text = f"发布日期：{date}\n{text}"
                     if body and not body.startswith("[fetch error"):
                         text += f"\n\n正文：{body}"
+
+                    if sogou_link:
+                        new_links.add(sogou_link)
 
                     results.append({
                         "text": text,
@@ -238,5 +263,5 @@ def fetch_sogou_articles() -> list[dict]:
         finally:
             browser.close()
 
-    print(f"[Sogou] Total: {len(results)} article(s) from {len(names)} account(s).")
-    return results
+    print(f"[Sogou] Total: {len(results)} new article(s), {len(skip_links)} already seen.")
+    return results, new_links

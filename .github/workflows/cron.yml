@@ -6,7 +6,7 @@ on:
   workflow_dispatch:       # Manual trigger for testing
 
 jobs:
-  poll-and-remind:
+  poll:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -36,15 +36,9 @@ jobs:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           WECHAT_SOGOU_NAMES: ${{ secrets.WECHAT_SOGOU_NAMES }}
+          FEISHU_WIKI_TOKEN: ${{ secrets.FEISHU_WIKI_TOKEN }}
+          FEISHU_TABLE_ID: ${{ secrets.FEISHU_TABLE_ID }}
         run: python -m server.main poll
-
-      - name: Send reminders
-        env:
-          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
-          FEISHU_MY_OPEN_ID: ${{ secrets.FEISHU_MY_OPEN_ID }}
-          REMINDER_DAYS: ${{ vars.REMINDER_DAYS || '7,3,1' }}
-        run: python -m server.main remind
 
       - name: Commit updated data
         run: |

@@ -54,6 +54,8 @@ def load_state() -> dict:
         return {}
     s.setdefault("last_message_ids", {})
     s.setdefault("processed_ids", [])
+    s.setdefault("last_email_uid", "0")
+    s.setdefault("seen_sogou_links", [])
     return s
 
 
@@ -193,9 +195,11 @@ def run_poll():
 
     # ── Source 2: Email ──
     print("\n[Source] Email (IMAP)...")
-    emails = fetch_recent_emails()
+    last_email_uid = int(state.get("last_email_uid", 0))
+    emails, max_uid = fetch_recent_emails(since_uid=last_email_uid)
     if emails:
         total_new += _process_texts(emails, state, ddls)
+        state["last_email_uid"] = str(max_uid)
 
     # ── Source 3: WeChat RSS ──
     print("\n[Source] WeChat RSS...")
@@ -207,12 +211,64 @@ def run_poll():
     from server.sources.wechat_sogou import fetch_sogou_articles
 
     print("\n[Source] Sogou WeChat...")
-    sogou_articles = fetch_sogou_articles()
+    seen_links = set(state.get("seen_sogou_links", [])[-500:])  # keep last 500
+    sogou_articles, new_sogou_links = fetch_sogou_articles(skip_links=seen_links)
     if sogou_articles:
         total_new += _process_texts(sogou_articles, state, ddls)
+        if new_sogou_links:
+            all_links = set(state.get("seen_sogou_links", []))
+            all_links.update(new_sogou_links)
+            state["seen_sogou_links"] = list(all_links)[-500:]
 
     if total_new > 0:
         save_ddls(ddls)
+
+    # ── Sync to Bitable ──
+    wiki_token = os.environ.get("FEISHU_WIKI_TOKEN", "")
+    table_id = os.environ.get("FEISHU_TABLE_ID", "")
+    if wiki_token and table_id:
+        from server.sources.feishu_bitable import FeishuBitable, build_ddl_fields
+
+        print("\n[Bitable] Syncing to multidimensional table...")
+        bt = FeishuBitable()
+        app_token = bt.resolve_bitable_token(wiki_token)
+        if app_token:
+            existing = bt.list_records(app_token, table_id)
+            # Build a set of (title, deadline) already in the table
+            seen_in_table: set[tuple[str, str]] = set()
+            for rec in existing:
+                f = rec.get("fields", {})
+                t = f.get("标题", "")
+                d = ""
+                dl_ts = f.get("截止日期")
+                if dl_ts:
+                    from datetime import datetime as _dt, timezone as _tz
+                    try:
+                        d = _dt.fromtimestamp(dl_ts / 1000, tz=_tz.utc).isoformat()
+                    except Exception:
+                        pass
+                seen_in_table.add((t, d))
+
+            # Collect new DDLs not yet in the table (skip past deadlines)
+            new_fields = []
+            for ddl in ddls:
+                key = (ddl.get("title", ""), ddl.get("deadline", ""))
+                if key in seen_in_table:
+                    continue
+                fields = build_ddl_fields(ddl)
+                if fields is None:
+                    continue  # past deadline
+                new_fields.append(fields)
+                seen_in_table.add(key)
+
+            if new_fields:
+                n = bt.add_records(app_token, table_id, new_fields)
+                print(f"[Bitable] {n} new record(s) written, {len(new_fields) - n} failed.")
+            else:
+                print("[Bitable] All DDLs already in table, nothing to add.")
+        else:
+            print("[Bitable] Could not resolve wiki token to Bitable app_token.")
+
     save_state(state)
     print(f"\nDone: {total_new} new DDL(s) saved, {len(ddls)} total")
 

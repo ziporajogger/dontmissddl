@@ -3,7 +3,6 @@
 import email
 import imaplib
 import os
-from datetime import datetime, timezone
 from email.header import decode_header
 
 
@@ -39,8 +38,19 @@ def _get_body(msg) -> str:
     return ""
 
 
-def fetch_recent_emails(hours: int = 24) -> list[dict]:
-    """Fetch recent unread emails via IMAP. Returns list of {text, source_group, source_url}."""
+def fetch_recent_emails(since_uid: int = 0) -> tuple[list[dict], int]:
+    """Fetch unread emails since a given IMAP UID (exclusive).
+
+    Does NOT mark emails as read — your inbox stays untouched.
+    Instead, tracks the highest UID seen so the next call only fetches newer mail.
+
+    Args:
+        since_uid: only fetch emails with UID > this value. 0 = fetch all unread.
+
+    Returns:
+        results: list of {text, source_group, source_url, msg_id} dicts
+        max_uid: the highest UID fetched this run (pass as since_uid next time)
+    """
 
     host = os.environ.get("EMAIL_HOST", "")
     port = int(os.environ.get("EMAIL_PORT", "993"))
@@ -49,31 +59,34 @@ def fetch_recent_emails(hours: int = 24) -> list[dict]:
 
     if not host or not user or not password:
         print("[EMAIL] Not configured, skipping.")
-        return []
+        return [], since_uid
 
-    results = []
+    results: list[dict] = []
+    max_uid = since_uid
     try:
         mail = imaplib.IMAP4_SSL(host, port)
         mail.login(user, password)
         mail.select("INBOX")
 
-        # Search for emails from last N hours
-        since = datetime.now(timezone.utc)
-        # IMAP search doesn't support hours, so we search recent + filter
-        status, data = mail.search(None, "UNSEEN")
+        # Fetch all UNSEEN messages, then filter by UID
+        status, data = mail.uid("SEARCH", None, "UNSEEN")
         if status != "OK":
             mail.logout()
-            return []
+            return [], since_uid
 
-        msg_ids = data[0].split()
-        if not msg_ids:
-            print("[EMAIL] No new unread emails.")
+        all_uids = data[0].split()
+        if not all_uids:
+            print("[EMAIL] No unread emails.")
             mail.logout()
-            return []
+            return [], since_uid
 
-        # Process last 20 unread emails
-        for mid in msg_ids[-20:]:
-            status, msg_data = mail.fetch(mid, "(RFC822)")
+        # Filter to only new UIDs since last run (don't re-fetch already processed)
+        new_uids = [u for u in all_uids if int(u) > since_uid]
+        print(f"[EMAIL] {len(new_uids)} new unread (out of {len(all_uids)} total unread).")
+
+        for uid_bytes in new_uids:
+            uid = int(uid_bytes)
+            status, msg_data = mail.uid("FETCH", uid_bytes, "(RFC822)")
             if status != "OK":
                 continue
 
@@ -85,21 +98,26 @@ def fetch_recent_emails(hours: int = 24) -> list[dict]:
             body = _get_body(msg)
 
             # Combine subject + body for LLM
-            text = f"邮件主题：{subject}\n发件人：{sender}\n\n{body[:2000]}"  # truncate long emails
+            text = f"邮件主题：{subject}\n发件人：{sender}\n\n{body[:2000]}"
             if len(body) > 2000:
                 text += "\n\n[邮件内容过长，已截断]"
 
+            uid_str = str(uid)
             results.append({
                 "text": text,
                 "source": "email",
                 "source_group": sender,
                 "source_url": "",
                 "raw_text": f"Subject: {subject}",
+                "msg_id": uid_str,
             })
+            if uid > max_uid:
+                max_uid = uid
 
         mail.logout()
-        print(f"[EMAIL] Fetched {len(results)} unread email(s).")
+        print(f"[EMAIL] Fetched {len(results)} email(s), max_uid={max_uid}.")
     except Exception as e:
         print(f"[EMAIL] Error: {e}")
+        return results, max_uid
 
-    return results
+    return results, max_uid
