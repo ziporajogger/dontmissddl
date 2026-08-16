@@ -38,6 +38,19 @@ jobs:
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           WECHAT_SOGOU_NAMES: ${{ secrets.WECHAT_SOGOU_NAMES }}
+          GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          NOTIFY_FEISHU_CHAT_ID: ${{ secrets.NOTIFY_FEISHU_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          NOTIFY_EMAIL_HOST: ${{ secrets.NOTIFY_EMAIL_HOST }}
+          NOTIFY_EMAIL_PORT: ${{ secrets.NOTIFY_EMAIL_PORT }}
+          NOTIFY_EMAIL_USER: ${{ secrets.NOTIFY_EMAIL_USER }}
+          NOTIFY_EMAIL_PASSWORD: ${{ secrets.NOTIFY_EMAIL_PASSWORD }}
+          NOTIFY_EMAIL_TO: ${{ secrets.NOTIFY_EMAIL_TO }}
         run: python -m server.main poll
 
       - name: Commit updated data

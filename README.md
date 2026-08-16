@@ -27,7 +27,9 @@
                └─ 到期 7 / 3 / 1 天 → 发带「忽略/完成」按钮的卡片
 ```
 
-**关键设计**：收集和提取是代码（GitHub Actions），**存储和提醒都在飞书上**——多维表格当数据库，自动化当定时提醒。代码库里不存任何个人数据，也没有后台服务要维护。
+**关键设计**：收集和提取是代码（GitHub Actions），**默认的存储和提醒都在飞书上**——多维表格当数据库，自动化当定时提醒。代码库里不存任何个人数据，也没有后台服务要维护。
+
+存储和通知都做成**可插拔**：默认「飞书多维表格 + 飞书自动化」，可选换成「Google Calendar 存储」，或用代码把提醒推到其它渠道（飞书 / Telegram / 邮件 / 钉钉 / 企业微信 / ntfy），见下方「可选扩展」。
 
 ---
 
@@ -139,6 +141,40 @@
 
 **规则 B · 到期提醒（7/3/1 天）**：触发器=每天 09:30 → 条件=剩余天数∈{7,3,1} → 发带「完成」「忽略」按钮的卡片（点按钮把「状态」改成已完成/已忽略）。
 
+> 为什么提醒用多维表格自带的自动化、而不是写代码发通知？因为自动化能**零服务器**支持「点按钮改状态」的交互卡片——按钮点击由飞书平台闭环处理，不需要回调服务器。若改成代码发卡片，要保留「一键完成/忽略」就得有一个能收回调的服务，会打破零服务器。
+
+---
+
+## 可选扩展：换存储 / 加通知渠道
+
+以下都是**可选项**，不配就维持上面的默认方案（飞书多维表格 + 飞书自动化）。填了对应 Secret 即自动启用。
+
+### 换存储：Google Calendar（可选）
+
+不写多维表格，把 DDL 写成 **Google Calendar 日历事件**，由 Google 自带提醒（提前 3 天 / 1 天弹窗）。零服务器：用服务账号读写日历。
+
+1. Google Cloud 建一个「服务账号」，生成 JSON 密钥。
+2. 把 JSON 内容整段填进 Secret `GOOGLE_SERVICE_ACCOUNT`。
+3. 在 Google 日历里把目标日历**分享给服务账号的邮箱**（给「进行更改」权限）。
+4. Secret 填 `GOOGLE_CALENDAR_ID`（日历 ID，形如 `xxx@group.calendar.google.com`）。
+
+配好后代码自动改用它（优先级高于飞书多维表格）。注意：Google Calendar 的提醒是**只读推送**，没有「一键完成/忽略」按钮，改状态得回日历里删/改事件。
+
+### 加通知渠道：代码发通知（可选）
+
+默认用飞书自动化提醒。想同时（或改）让代码自己把「新增 DDL」「7/3/1 天到期」推到别的渠道，填下面 Secret 即可，可多个同时：
+
+| 渠道 | Secret | 说明 |
+|------|--------|------|
+| 飞书 | `NOTIFY_FEISHU_CHAT_ID` | 飞书群 chat_id（发提醒的群） |
+| Telegram | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | BotFather 建 bot，HTTP 直连 |
+| 邮件 | `NOTIFY_EMAIL_HOST` / `PORT` / `USER` / `PASSWORD` / `TO` | SMTP 发件（区别于收邮件的 IMAP） |
+| 钉钉 | `DINGTALK_WEBHOOK` | 群机器人 webhook |
+| 企业微信 | `WECOM_WEBHOOK` | 群机器人 webhook |
+| ntfy | `NTFY_TOPIC` | 免费 push 到手机（手机装 ntfy 订阅同名 topic） |
+
+> 这些是**单向推送**：能发文字，不能「点按钮改状态」。要保留交互卡片的一键完成/忽略，还是得用飞书自动化（见上文）。两者可并存。
+
 ---
 
 ## 配置（GitHub Secrets）
@@ -158,10 +194,13 @@
 | `EMAIL_HOST` / `EMAIL_PORT` | 选填 | IMAP 服务器 / 端口 |
 | `EMAIL_USER` / `EMAIL_PASSWORD` | 选填 | 邮箱账号 / 授权码 |
 | `WECHAT_SOGOU_NAMES` | 选填 | 公众号名称，逗号分隔 |
+| `GOOGLE_CALENDAR_ID` | 选填 | 换 Google Calendar 存储时的日历 ID |
+| `GOOGLE_SERVICE_ACCOUNT` | 选填 | 服务账号 JSON（换 Google Calendar 存储用） |
+| `NOTIFY_*`（飞书 / Telegram / 邮件 / 钉钉 / 企业微信 / ntfy） | 选填 | 代码发通知的渠道，见「可选扩展」 |
 
 > 大模型走 OpenAI 兼容接口，任意厂商均可（如 OpenAI、Moonshot、通义千问），改 `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` 三个 Secret 即可切换。
 >
-> `*` 表示这套「写表格」链路必须配置；信息源按需任选一个即可。
+> `*` 表示默认「飞书多维表格」链路必须配置；信息源按需任选一个即可。若改用 Google Calendar 存储，`FEISHU_APP_TOKEN` / `FEISHU_TABLE_ID` 可不填。上面「选填」的项都是可选项，不填不影响核心功能。
 
 ---
 
@@ -173,7 +212,8 @@ dontmissddl/
 ├── setup.py                    ← 部署脚本（Mac/Linux 运行 python setup.py）
 ├── server/
 │   ├── main.py                 ← 入口：拉取信息源并写入存储
-│   ├── storage.py              ← 存储抽象层（目前仅飞书多维表格）
+│   ├── storage.py              ← 存储抽象层（飞书多维表格 / Google Calendar）
+│   ├── notify.py               ← 通知抽象层（飞书/Telegram/邮件/钉钉/企业微信/ntfy，可选）
 │   ├── extract.py              ← 大模型提取 DDL
 │   └── sources/
 │       ├── feishu_bot.py       ← 飞书群消息读取
@@ -196,6 +236,8 @@ dontmissddl/
 **dontmissddl** is a zero-server, zero-cost DDL reminder. It monitors Feishu groups, email (any IMAP mailbox), or WeChat public accounts — pick one or more — extracts deadlines with an LLM, stores them in a Feishu Bitable, and sends reminders via Feishu automation. Everything runs on GitHub Actions' free tier.
 
 **Pipeline:** GitHub Actions (daily 09:00 Beijing, configurable in `cron.yml`) → poll sources → LLM extraction → write Feishu Bitable → Feishu automation sends reminders (new-DDL notice + 7/3/1-day alerts with "ignore/done" buttons).
+
+**Optional:** store to Google Calendar instead of the Bitable, and/or push notifications via code to Feishu / Telegram / email / DingTalk / WeCom / ntfy. All opt-in via Secrets; the default Feishu-automation flow stays intact.
 
 **Two ways to install, pick one:** Claude Code — open the cloned repo and run `/dontmissddl-setup`; or `start.bat` (Windows) / `python setup.py` (Mac/Linux).
 

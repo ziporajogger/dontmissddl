@@ -1,8 +1,9 @@
 """dontmissddl — Main entry point. Runs in GitHub Actions, not a long-lived server.
 
 Fetches recent content from Feishu/Email/WeChat, extracts DDLs via LLM, and
-writes them to the configured storage backend (Feishu Bitable). Reminders are
-handled by Feishu Bitable automation, not here.
+writes them to the configured storage backend (Feishu Bitable or Google
+Calendar). Reminders are handled by Feishu Bitable automation by default, with
+optional code-sent notifications (Feishu/Telegram/email/webhook/ntfy).
 """
 
 from __future__ import annotations
@@ -123,6 +124,59 @@ def _process_texts(texts: list[dict], state: dict, ddls: list[dict]) -> int:
     return new_count
 
 
+# ═══════════════════════════════════════════════════
+# 通知（可选，代码发）—— 只做单向推送，交互改状态仍靠飞书自动化
+# ═══════════════════════════════════════════════════
+
+def _notify_all(notifiers, text: str):
+    for n in notifiers:
+        try:
+            ok = n.send(text)
+        except Exception as e:
+            ok = False
+            print(f"  [notify:{n.name}] ✗ {e}")
+            continue
+        print(f"  [notify:{n.name}] {'✓' if ok else '✗'}")
+
+
+def _fmt_new_ddl(to_add: list[dict]) -> str:
+    head = f"📌 dontmissddl 新增 {len(to_add)} 条 DDL："
+    lines = "\n".join(f"• {d['title']} — {d['deadline']}" for d in to_add[:20])
+    if len(to_add) > 20:
+        lines += f"\n…（其余 {len(to_add) - 20} 条略）"
+    return f"{head}\n{lines}"
+
+
+def _fmt_upcoming(upcoming: list[tuple[str, str, int]]) -> str:
+    head = "⏰ dontmissddl 快到期提醒："
+    lines = "\n".join(f"• {t}（剩 {days} 天，{dl}）" for t, dl, days in upcoming[:20])
+    if len(upcoming) > 20:
+        lines += f"\n…（其余 {len(upcoming) - 20} 条略）"
+    return f"{head}\n{lines}"
+
+
+def _check_upcoming(storage) -> list[tuple[str, str, int]]:
+    """扫描存储里所有 DDL，返回还剩 7/3/1 天且未完成的 (标题, 截止日期, 天数)。"""
+    upcoming: list[tuple[str, str, int]] = []
+    today = datetime.now(timezone.utc).date()
+    for ddl in storage.list_ddls():
+        if ddl.get("status", "") in ("已完成", "已忽略"):
+            continue
+        deadline = ddl.get("deadline", "")
+        if not deadline:
+            continue
+        try:
+            dt = datetime.fromisoformat(deadline)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            continue
+        days = (dt.date() - today).days
+        if days in (7, 3, 1):
+            upcoming.append((ddl.get("title", ""), deadline, days))
+    return upcoming
+
+
 def run_poll():
     from server.sources.feishu_bot import FeishuBot
     from server.sources.email_source import fetch_recent_emails
@@ -209,10 +263,11 @@ def run_poll():
     from server.storage import get_storage
 
     storage = get_storage()
+    to_add: list[dict] = []
     if storage is None:
-        print("\n[Storage] 未配置存储（FEISHU_APP_TOKEN / FEISHU_TABLE_ID），跳过写入。")
+        print("\n[Storage] 未配置存储（FEISHU_APP_TOKEN / FEISHU_TABLE_ID 或 GOOGLE_CALENDAR_ID），跳过写入。")
     else:
-        print("\n[Storage] 写入飞书多维表格...")
+        print("\n[Storage] 写入存储...")
         existing = storage.list_existing()
         to_add = [d for d in ddls if (d.get("title"), d.get("deadline")) not in existing]
         if to_add:
@@ -220,6 +275,23 @@ def run_poll():
             print(f"[Storage] {n} 条新记录写入，{len(to_add) - n} 条失败。")
         else:
             print("[Storage] 全部已存在，无新增。")
+
+    # ── 通知（可选，代码发）──
+    from server.notify import get_notifiers
+
+    notifiers = get_notifiers()
+    if not notifiers:
+        print("\n[Notify] 未配置通知渠道，跳过（默认用飞书自动化提醒）。")
+    else:
+        print(f"\n[Notify] 发送通知（{len(notifiers)} 个渠道）...")
+        if to_add:
+            _notify_all(notifiers, _fmt_new_ddl(to_add))
+        if storage is not None:
+            upcoming = _check_upcoming(storage)
+            if upcoming:
+                _notify_all(notifiers, _fmt_upcoming(upcoming))
+        else:
+            print("[Notify] 未配置存储，跳过到期提醒扫描。")
 
     save_state(state)
     print(f"\nDone: 提取 {total_new} 个新 DDL")
