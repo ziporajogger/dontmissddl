@@ -16,8 +16,9 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
+from server.tz import BEIJING_TZ
 from server.sources.feishu_bitable import FeishuBitable, build_ddl_fields
 
 
@@ -50,7 +51,7 @@ class FeishuBitableStorage(Storage):
         if not ts:
             return ""
         try:
-            return datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
+            return datetime.fromtimestamp(ts / 1000, tz=BEIJING_TZ).replace(tzinfo=None).isoformat()
         except Exception:
             return ""
 
@@ -127,13 +128,13 @@ class GoogleCalendarStorage(Storage):
 
     def add(self, ddls: list[dict]) -> int:
         added = 0
-        now = datetime.now(timezone.utc)
+        now = datetime.now(BEIJING_TZ)
         for ddl in ddls:
             deadline_str = ddl.get("deadline", "")
             try:
                 dt = datetime.fromisoformat(deadline_str)
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                    dt = dt.replace(tzinfo=BEIJING_TZ)
                 if dt < now:
                     continue
             except (ValueError, TypeError):
@@ -142,9 +143,9 @@ class GoogleCalendarStorage(Storage):
             body = {
                 "summary": ddl.get("title", ""),
                 "description": ddl.get("description", ""),
-                "start": {"dateTime": dt.isoformat(), "timeZone": "UTC"},
+                "start": {"dateTime": dt.isoformat(), "timeZone": "Asia/Shanghai"},
                 "end": {"dateTime": (dt + timedelta(minutes=30)).isoformat(),
-                        "timeZone": "UTC"},
+                        "timeZone": "Asia/Shanghai"},
                 "reminders": {
                     "useDefault": False,
                     "overrides": [

@@ -3,9 +3,11 @@
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 
 import requests
+
+from server.tz import BEIJING_TZ
 
 
 class FeishuBitable:
@@ -148,9 +150,9 @@ def build_ddl_fields(ddl: dict) -> dict | None:
         try:
             dt = datetime.fromisoformat(deadline_str)
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.replace(tzinfo=BEIJING_TZ)
             # Skip past deadlines
-            if dt < datetime.now(timezone.utc):
+            if dt < datetime.now(BEIJING_TZ):
                 return None
             deadline_ts = int(dt.timestamp() * 1000)
         except (ValueError, TypeError):
@@ -163,13 +165,13 @@ def build_ddl_fields(ddl: dict) -> dict | None:
         try:
             add_dt = datetime.fromisoformat(created_str)
             if add_dt.tzinfo is None:
-                add_dt = add_dt.replace(tzinfo=timezone.utc)
-            add_date_ts = int(datetime(add_dt.year, add_dt.month, add_dt.day, tzinfo=timezone.utc).timestamp() * 1000)
+                add_dt = add_dt.replace(tzinfo=BEIJING_TZ)
+            add_date_ts = int(datetime(add_dt.year, add_dt.month, add_dt.day, tzinfo=BEIJING_TZ).timestamp() * 1000)
         except (ValueError, TypeError):
             pass
     if add_date_ts is None:
-        now = datetime.now(timezone.utc)
-        add_date_ts = int(datetime(now.year, now.month, now.day, tzinfo=timezone.utc).timestamp() * 1000)
+        now = datetime.now(BEIJING_TZ)
+        add_date_ts = int(datetime(now.year, now.month, now.day, tzinfo=BEIJING_TZ).timestamp() * 1000)
 
     return {
         "标题": ddl.get("title", ""),

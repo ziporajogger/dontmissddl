@@ -11,8 +11,10 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
+
+from server.tz import BEIJING_TZ
 
 # Fix Unicode on Windows GBK terminal
 if sys.platform == "win32":
@@ -114,7 +116,7 @@ def _process_texts(texts: list[dict], state: dict, ddls: list[dict]) -> int:
                 "source_group": item.get("source_group", ""),
                 "source_url": item.get("source_url", ""),
                 "raw_text": text,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(BEIJING_TZ).isoformat(),
             })
             print(f"    [+] {ddl['title']} -> {ddl['deadline']}")
             new_count += 1
@@ -125,7 +127,7 @@ def _process_texts(texts: list[dict], state: dict, ddls: list[dict]) -> int:
 
 
 # ═══════════════════════════════════════════════════
-# 通知（可选，代码发）—— 只做单向推送，交互改状态仍靠飞书自动化
+# 通知（可选，代码发）—— 只做单向推送，交互改状态仍靠飞书工作流
 # ═══════════════════════════════════════════════════
 
 def _notify_all(notifiers, text: str):
@@ -158,7 +160,7 @@ def _fmt_upcoming(upcoming: list[tuple[str, str, int]]) -> str:
 def _check_upcoming(storage) -> list[tuple[str, str, int]]:
     """扫描存储里所有 DDL，返回还剩 7/3/1 天且未完成的 (标题, 截止日期, 天数)。"""
     upcoming: list[tuple[str, str, int]] = []
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(BEIJING_TZ).date()
     for ddl in storage.list_ddls():
         if ddl.get("status", "") in ("已完成", "已忽略"):
             continue
@@ -168,7 +170,7 @@ def _check_upcoming(storage) -> list[tuple[str, str, int]]:
         try:
             dt = datetime.fromisoformat(deadline)
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.replace(tzinfo=BEIJING_TZ)
         except (ValueError, TypeError):
             continue
         days = (dt.date() - today).days
@@ -281,7 +283,7 @@ def run_poll():
 
     notifiers = get_notifiers()
     if not notifiers:
-        print("\n[Notify] 未配置通知渠道，跳过（默认用飞书自动化提醒）。")
+        print("\n[Notify] 未配置通知渠道，跳过（默认用飞书工作流提醒）。")
     else:
         print(f"\n[Notify] 发送通知（{len(notifiers)} 个渠道）...")
         if to_add:

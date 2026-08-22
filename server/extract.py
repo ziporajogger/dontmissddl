@@ -2,9 +2,11 @@
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from openai import OpenAI
+
+from server.tz import BEIJING_TZ
 
 PROMPT_DIR = Path(__file__).parent.parent / "prompts"
 EXTRACT_PROMPT = (PROMPT_DIR / "extract-ddl.md").read_text(encoding="utf-8")
@@ -21,7 +23,7 @@ def _get_client():
 
 def extract_ddl(text: str) -> list[dict] | None:
     """Extract DDL info from raw message text. Returns list of DDL dicts or None."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
     prompt = EXTRACT_PROMPT.replace("{current_date}", today)
 
     client = _get_client()
